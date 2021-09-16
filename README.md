@@ -21,7 +21,9 @@
 ## Run the app (Docker):
 
 install Docker Desktop
+
 docker build -t name .
+
 docker run name
 
 
