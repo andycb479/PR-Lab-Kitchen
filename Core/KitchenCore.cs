@@ -1,13 +1,12 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Timers;
-using AutoMapper;
-using Hall.Core.Models;
+﻿using AutoMapper;
 using Kitchen.Controllers;
+using Kitchen.Core.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Concurrent;
+using System.Linq;
+using System.Threading;
 
 namespace Kitchen.Core
 {
@@ -15,70 +14,47 @@ namespace Kitchen.Core
      {
           private readonly ILogger<KitchenController> _logger;
           private readonly IKitchenRequestHandler _kitchenRequestHandler;
+          private readonly EventHandler OrderFromHallReceived;
           private readonly IMapper _mapper;
+          private readonly IKitchenManager _kitchenManager;
           public readonly int TIME_UNIT;
+          private readonly int ORDER_LIST_SIZE;
           private static Mutex mut = new();
+          private BlockingCollection<HallOrder> _ordersList;
 
-
-          private ConcurrentQueue<HallOrder> _orderList = new();
-
-          public KitchenCore(ILogger<KitchenController> logger, IKitchenRequestHandler kitchenRequestHandler, IMapper mapper, IConfiguration configuration)
+          public KitchenCore(ILogger<KitchenController> logger, IKitchenRequestHandler kitchenRequestHandler, IMapper mapper, IConfiguration configuration, IKitchenManager kitchenManager)
           {
                _logger = logger;
                _kitchenRequestHandler = kitchenRequestHandler;
                _mapper = mapper;
-
-               var numberOfCooks = int.Parse(configuration["Cooks"]);
+               _kitchenManager = kitchenManager;
+               ORDER_LIST_SIZE = int.Parse(configuration["OrderListSize"]);
                TIME_UNIT = int.Parse(configuration["TIME_UNIT"]);
-
-
-               for (var i = 1; i < numberOfCooks; i++)
-               {
-                    Task.Factory.StartNew(() => { ProcessOrderList(i); });
-               }
-
+               _ordersList = new BlockingCollection<HallOrder>(ORDER_LIST_SIZE);
+               OrderFromHallReceived += SendOrderToMediator;
           }
 
-          private void ProcessOrderList(int cookId)
+          private void SendOrderToMediator(object? sender, EventArgs e)
           {
-
-               var aTimer = new System.Timers.Timer( 0.5*TIME_UNIT);
-
-               aTimer.Elapsed += (sender, e) => TakeOrder(cookId); ;
-               aTimer.AutoReset = true;
-               aTimer.Enabled = true;
-
-          }
-
-          private void TakeOrder(int cookId)
-          {
-               var r = new Random();
-
                mut.WaitOne();
 
-               if (_orderList.TryDequeue(out var order))
+               if (_ordersList.TryTake(out var order))
                {
-                    _logger.LogInformation($"Order with Id {order.OrderId} taken by Cook {cookId}.");
-
-                    var currentKitchenOrder = _mapper.Map<KitchenOrder>(order);
-
-                    currentKitchenOrder.CookId = cookId;
-
-                    Thread.Sleep(r.Next(1, 5) * TIME_UNIT);
-
-                    _kitchenRequestHandler.PostReadyOrderToHall(currentKitchenOrder);
+                    _kitchenManager.AddOrderToPrepareList(order);
                }
 
                mut.ReleaseMutex();
-
           }
 
           public void AddOrderToList(HallOrder order)
           {
                mut.WaitOne();
 
-               _orderList.Enqueue(order);
+               _ordersList.TryAdd(order);
+               _ordersList = new BlockingCollection<HallOrder>(
+                    new ConcurrentQueue<HallOrder>(_ordersList.OrderByDescending(o => o.Priority)), ORDER_LIST_SIZE);
                _logger.LogInformation($"Order with Id {order.OrderId} added to the Order List");
+               OrderFromHallReceived?.Invoke(this, EventArgs.Empty);
 
                mut.ReleaseMutex();
 

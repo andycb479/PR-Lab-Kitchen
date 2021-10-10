@@ -1,4 +1,4 @@
-﻿namespace Hall.Core.Models
+﻿namespace Kitchen.Core.Models
 {
      public enum CookingTool
      {

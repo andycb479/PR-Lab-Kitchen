@@ -1,8 +1,8 @@
 ﻿using System.Net.Http;
 using System.Net.Http.Json;
 using System.Threading.Tasks;
-using Hall.Core.Models;
 using Kitchen.Controllers;
+using Kitchen.Core.Models;
 using Microsoft.Extensions.Logging;
 
 namespace Kitchen.Core
@@ -16,7 +16,7 @@ namespace Kitchen.Core
                _logger = logger;
           }
 
-          public async Task<HttpResponseMessage> PostReadyOrderToHall(KitchenOrder order)
+          public async Task<HttpResponseMessage> PostReadyOrderToHall(KitchenReturnOrder order)
           {
                var clientHandler = new HttpClientHandler
                {
@@ -29,7 +29,7 @@ namespace Kitchen.Core
                if (postTask.IsSuccessStatusCode)
                {
                     _logger.LogInformation(
-                         $"Order with Id {order.OrderId} send to the hall by Cook {order.CookId}.");
+                         $"Order with Id {order.OrderId} send to the hall");
                }
                else
                {
