@@ -43,11 +43,12 @@ namespace Kitchen
                          });
                });
 
-               services.AddScoped<IKitchenRequestHandler, KitchenRequestHandler>();
+               services.AddSingleton<IKitchenCore, KitchenCore>();
+               services.AddSingleton<IKitchenRequestHandler, KitchenRequestHandler>();
+               services.AddSingleton<IKitchenManager, KitchenManager>();
 
                services.AddAutoMapper(Assembly.GetAssembly(typeof(KitchenCore)));
 
-               services.AddScoped<IKitchenCore, KitchenCore>();
           }
 
           public void Configure(IApplicationBuilder app, IWebHostEnvironment env, IKitchenCore kitchenCore)
