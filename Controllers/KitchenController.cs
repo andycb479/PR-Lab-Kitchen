@@ -1,6 +1,6 @@
 ﻿using System.Threading.Tasks;
-using Hall.Core.Models;
 using Kitchen.Core;
+using Kitchen.Core.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
@@ -21,7 +21,7 @@ namespace Kitchen.Controllers
           }
 
           [HttpPost("order")]
-          public ActionResult RecieveOrder([FromBody] HallOrder order)
+          public ActionResult ReceivedOrder([FromBody] HallOrder order)
           {
                _logger.LogInformation($"Order with Id {order.OrderId} received by the kitchen");
                Task.Factory.StartNew(() =>
@@ -32,11 +32,5 @@ namespace Kitchen.Controllers
                
                return Ok();
           }
-     }
-
-     public class Message
-     {
-          public string Text { get; set; }
-
      }
 }

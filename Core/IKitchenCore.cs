@@ -1,5 +1,5 @@
 ﻿using System.Threading.Tasks;
-using Hall.Core.Models;
+using Kitchen.Core.Models;
 
 namespace Kitchen.Core
 {

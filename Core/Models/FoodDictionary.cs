@@ -1,6 +1,6 @@
 ﻿using System.Collections.Generic;
 
-namespace Hall.Core.Models
+namespace Kitchen.Core.Models
 {
      public class FoodDictionary
      {
