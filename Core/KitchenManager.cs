@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoMapper;
@@ -17,11 +18,14 @@ namespace Kitchen.Core
           private readonly IMapper _mapper;
           private readonly IKitchenRequestHandler _kitchenRequestHandler;
           private List<KitchenFoodItem> _foodItems = new();
-          public readonly int TIME_UNIT;
+          private readonly int TIME_UNIT;
           private static Mutex foodListMutex = new();
           private static Mutex preparedOrdersMutex = new();
           private readonly FoodDictionary _foodDictionary = new();
+          private int[] _cookCookingStack;
           private ConcurrentDictionary<Guid, KitchenReturnOrder> _preparedOrders = new();
+          private SemaphoreSlim _stovesSemaphore;
+          private SemaphoreSlim _ovenSemaphore;
 
           public KitchenManager(IConfiguration configuration, ILogger<KitchenController> logger, IMapper mapper, IKitchenRequestHandler kitchenRequestHandler)
           {
@@ -31,11 +35,17 @@ namespace Kitchen.Core
                TIME_UNIT = int.Parse(configuration["TIME_UNIT"]);
                var numberOfCooks = int.Parse(configuration["Cooks"]);
                var cookList = new CooksList().Cooks;
+               _cookCookingStack = new int[numberOfCooks];
 
-               for (var i = 1; i < numberOfCooks; i++)
+               var stovesCount = int.Parse(configuration["Stove"]);
+               var ovensCount = int.Parse(configuration["Oven"]);
+               _stovesSemaphore = new SemaphoreSlim(stovesCount, stovesCount);
+               _ovenSemaphore = new SemaphoreSlim(ovensCount, ovensCount);
+
+               for (var i = 0; i < numberOfCooks; i++)
                {
                     var i1 = i;
-                    Task.Factory.StartNew(() => { ProcessFoodList(cookList[i1 - 1]); });
+                    Task.Factory.StartNew(() => { ProcessFoodList(cookList[i1]); });
                }
 
           }
@@ -70,7 +80,6 @@ namespace Kitchen.Core
                     if (tempOrder.CookingDetails.Count == tempOrder.Items.Count)
                     {
                          _kitchenRequestHandler.PostReadyOrderToHall(tempOrder);
-                         _logger.LogInformation($"Order with Id {tempOrder.OrderId} send to the Hall");
                          _preparedOrders.TryRemove(tempOrder.OrderId, out tempOrder);
                     }
                }
@@ -81,12 +90,12 @@ namespace Kitchen.Core
           private void ProcessFoodList(Cook cook)
           {
                var aTimer = new System.Timers.Timer(2 * TIME_UNIT);
-               aTimer.Elapsed += async (sender, e) => await TakeFood(cook); ;
+               aTimer.Elapsed += async (sender, e) => await TakeFood(cook, aTimer); ;
                aTimer.AutoReset = true;
                aTimer.Enabled = true;
           }
 
-          private Task TakeFood(Cook cook)
+          private Task TakeFood(Cook cook, System.Timers.Timer timer)
           {
                foodListMutex.WaitOne();
 
@@ -96,26 +105,39 @@ namespace Kitchen.Core
                     return Task.CompletedTask;
                }
 
-               var minDifference = 100;
-               KitchenFoodItem bestFoodItemToPrepare = null;
+               timer.Stop();
+               _cookCookingStack[cook.CookId]++;
 
-               foreach (var foodItem in _foodItems)
+               if (_cookCookingStack[cook.CookId] < cook.Proficiency)
                {
-                    if (foodItem.Complexity > cook.Rank) continue;
-
-                    var complexityDifference = cook.Rank - foodItem.Complexity;
-
-                    if (complexityDifference >= minDifference) continue;
-                    minDifference = complexityDifference;
-                    bestFoodItemToPrepare = foodItem;
+                    timer.Start();
                }
 
-               _foodItems.Remove(bestFoodItemToPrepare);
+               var bestFoodItemToPrepare = _foodItems.FirstOrDefault(f => f.Complexity <= cook.Rank);
 
+               _foodItems.Remove(bestFoodItemToPrepare);
                foodListMutex.ReleaseMutex();
+
                if (bestFoodItemToPrepare == null) return Task.CompletedTask;
 
-               _logger.LogInformation($"Cook with Id {cook.CookId} took {bestFoodItemToPrepare.Id} from order {bestFoodItemToPrepare.OrderId}");
+               var foodCookingTool = bestFoodItemToPrepare.CookingTool;
+               switch (foodCookingTool)
+               {
+                    case CookingTool.Oven:
+                         _ovenSemaphore.Wait();
+                         break;
+                    case CookingTool.Stove:
+                         _stovesSemaphore.Wait();
+                         break;
+                    case CookingTool.None:
+                         break;
+                    default:  
+                         throw new ArgumentOutOfRangeException();
+               }
+
+               _logger.LogInformation(
+                    $"[COOK-ID:{cook.CookId}-TOOK] {bestFoodItemToPrepare.Id}:{bestFoodItemToPrepare.CookingTool} from order {bestFoodItemToPrepare.OrderId}. " +
+                    $"Remaining tools. Stove:{_stovesSemaphore.CurrentCount} - Oven:{_ovenSemaphore.CurrentCount}");
 
                Thread.Sleep(bestFoodItemToPrepare.PreparationTime * TIME_UNIT);
 
@@ -133,9 +155,46 @@ namespace Kitchen.Core
 
                preparedOrdersMutex.ReleaseMutex();
 
+               switch (foodCookingTool)
+               {
+                    case CookingTool.Oven:
+                         _ovenSemaphore.Release();
+                         break;
+                    case CookingTool.Stove:
+                         _stovesSemaphore.Release();
+                         break;
+                    case CookingTool.None:
+                         break;
+                    default:
+                         throw new ArgumentOutOfRangeException();
+               }
+               _logger.LogInformation(
+                    $"[COOK-ID:{cook.CookId}-PREPARED] {bestFoodItemToPrepare.Id}:{bestFoodItemToPrepare.CookingTool} from order {bestFoodItemToPrepare.OrderId}. " +
+                    $"Remaining tools. Stove:{_stovesSemaphore.CurrentCount} - Oven:{_ovenSemaphore.CurrentCount}");
+               _cookCookingStack[cook.CookId]--;
+
+               timer.Start();
+
                CheckOrderState();
 
                return Task.CompletedTask;
           }
      }
 }
+
+// foreach (var foodItem in _foodItems)
+// {
+//      if (foodItem.Complexity > cook.Rank) continue;
+//
+//      var itemCookingTool = foodItem.CookingTool;
+//
+//      var complexityDifference = cook.Rank - foodItem.Complexity;
+//      var foodIndex = _foodItems.IndexOf(foodItem);
+//
+//      if (complexityDifference <= minDifference && )
+//      {
+//           minDifference = complexityDifference;
+//           bestFoodItemToPrepare = foodItem;
+//      }
+
+// }
